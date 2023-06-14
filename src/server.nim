@@ -1,4 +1,4 @@
-import asyncdispatch, asyncnet
+import asyncdispatch, asyncnet, protocol
 
 type
     Client = ref object
@@ -13,14 +13,38 @@ type
 
 proc newServer(): Server = Server(socket: newAsyncSocket(), clients: @[])
 
-var server = newServer()
+proc `$`(client: Client): string =
+    $client.id & "(" & client.netAddr & ")"
+
+proc processMessages(server: Server, client: Client) {.async.} = 
+    while true:
+        let line = await client.socket.recvLine()
+        if line.len == 0:
+            echo(client, " disconnected!")
+            client.connected = false
+            client.socket.close()
+            return
+        echo(client, " sent: ", line)
+        for c in server.clients:
+            if c.id != client.id and c.connected:
+                await c.socket.send(line & "\c\l")
+
 
 proc loop(server: Server, port = 7687) {.async.} =
     server.socket.bindAddr(port.Port)
     server.socket.listen()
 
     while true:
-        let clientSocket = await server.socket.accept()
-        echo("Accepted connection!")
+        let (netAddr, clientSocket) = await server.socket.acceptAddr()
+        echo("Accepted connection from ", netAddr)
+        let client = Client(
+            socket: clientSocket,
+            netAddr: netAddr,
+            id: server.clients.len,
+            connected: true
+        )
+        server.clients.add(client)
+        asyncCheck processMessages(server, client)
 
+var server = newServer()
 waitFor loop(server)
